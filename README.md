@@ -12,9 +12,13 @@
 
 # RunLoop 原理
 RunLoop 这个对象，在 iOS 里由 CFRunLoop 实现。简单来说，RunLoop 是用来监听输入源，进行调度处理的。这里的输入源可以是输入设备、网络、周期性或者延迟时间、异步回调。
+
 RunLoop 会接收两种类型的输入源：一种是来自另一个线程或者来自不同应用的异步消息（Source1）；另一种是来自预订时间或者重复间隔的同步事件（Source0）。
 
 接下来，通过 CFRunLoop 的源码来跟你分享下 RunLoop 的原理吧。
+
+查看 CFRunLoop 的完整代码可以点击 [这个链接](https://opensource.apple.com/source/CF/CF-1153.18/CFRunLoop.c.auto.html)
+
 
 
 
