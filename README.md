@@ -124,6 +124,35 @@ static int32_t __CFRunLoopRun(CFRunLoopRef rl, CFRunLoopModeRef rlm, CFTimeInter
 }
 ```
 
+__builtin_expect这个指令是gcc引入的，作用是允许程序员将最有可能执行的分支告诉编译器。
+这个指令的写法为：__builtin_expect(EXP, N)。
+意思是：EXP==N的概率很大。
+
+通过这种方式，编译器在编译过程中，会将可能性更大的代码紧跟着起面的代码，从而减少指令跳转带来的性能上的下降。
+
+一般的使用方法是将__builtin_expect指令封装为likely和unlikely宏。这两个宏的写法如下.
+
+```objectiveC
+// Compiler hints for "if" statements
+#define likely_if(x) if(__builtin_expect(x,1))
+#define unlikely_if(x) if(__builtin_expect(x,0))
+
+
+int ksjson_addIntegerElement(KSJSONEncodeContext* const context,
+                             const char* const name,
+                             int64_t value)
+{
+    int result = ksjson_beginElement(context, name);
+    unlikely_if(result != KSJSON_OK)
+    {
+        return result;
+    }
+    char buff[30];
+    sprintf(buff, "%" PRId64, value);
+    return addJSONData(context, buff, (int)strlen(buff));
+}
+
+```
 
 
 
