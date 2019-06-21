@@ -124,6 +124,82 @@ static int32_t __CFRunLoopRun(CFRunLoopRef rl, CFRunLoopModeRef rlm, CFTimeInter
 }
 ```
 
+# 卡顿检测
+
+```objectiveC
+
+// 开始监测卡顿
+- (void)beginMonitor {
+ 
+    if (runLoopObserver) {
+        return;
+    }
+    dispatchSemaphore = dispatch_semaphore_create(0); //Dispatch Semaphore保证同步
+    //创建一个观察者
+    CFRunLoopObserverContext context = {0,(__bridge void*)self,NULL,NULL};
+    runLoopObserver = CFRunLoopObserverCreate(kCFAllocatorDefault,
+                                              kCFRunLoopAllActivities,
+                                              YES,
+                                              0,
+                                              &runLoopObserverCallBack,
+                                              &context);
+    //将观察者添加到主线程runloop的common模式下的观察中
+    CFRunLoopAddObserver(CFRunLoopGetMain(), runLoopObserver, kCFRunLoopCommonModes);
+    
+    //创建子线程监控
+    dispatch_async(dispatch_get_global_queue(0, 0), ^{
+        //子线程开启一个持续的loop用来进行监控
+        while (YES) {
+            // 设置2秒超时
+            long semaphoreWait = dispatch_semaphore_wait(dispatchSemaphore, dispatch_time(DISPATCH_TIME_NOW, 2*NSEC_PER_SEC));
+            if (semaphoreWait != 0) {
+                if (!runLoopObserver) {
+                    timeoutCount = 0;
+                    dispatchSemaphore = 0;
+                    runLoopActivity = 0;
+                    return;
+                }
+                //两个runloop的状态，BeforeSources和AfterWaiting这两个状态区间时间能够检测到是否卡顿
+                if (runLoopActivity == kCFRunLoopBeforeSources || runLoopActivity == kCFRunLoopAfterWaiting) {
+                    //出现三次出结果
+                    if (++timeoutCount < 3) {
+                        continue;
+                    }
+                    
+                    // 处理卡顿
+                    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, 0), ^{
+                        // 打印堆栈信息
+                        
+                    });
+                }
+            }// end semaphore wait
+            timeoutCount = 0;
+        }// end while
+    });
+    
+}
+
+// runloop 监听回调
+static void runLoopObserverCallBack(CFRunLoopObserverRef observer, CFRunLoopActivity activity, void *info){
+    SMLagMonitor *lagMonitor = (__bridge SMLagMonitor*)info;
+    lagMonitor->runLoopActivity = activity;
+    
+    dispatch_semaphore_t semaphore = lagMonitor->dispatchSemaphore;
+    dispatch_semaphore_signal(semaphore);
+}
+
+// 结束监听
+- (void)endMonitor {
+    if (!runLoopObserver) {
+        return;
+    }
+    CFRunLoopRemoveObserver(CFRunLoopGetMain(), runLoopObserver, kCFRunLoopCommonModes);
+    CFRelease(runLoopObserver);
+    runLoopObserver = NULL;
+}
+
+```
+
 __builtin_expect这个指令是gcc引入的，作用是允许程序员将最有可能执行的分支告诉编译器。
 这个指令的写法为：__builtin_expect(EXP, N)。
 意思是：EXP==N的概率很大。
