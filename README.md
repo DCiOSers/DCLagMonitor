@@ -126,6 +126,23 @@ static int32_t __CFRunLoopRun(CFRunLoopRef rl, CFRunLoopModeRef rlm, CFTimeInter
 
 # 卡顿检测
 
+通过对 RunLoop 原理的分析，我们可以看出在整个过程中，loop 的状态包括 6 个，其代码定义如下：
+```objectiveC
+typedef CF_OPTIONS(CFOptionFlags, CFRunLoopActivity) {
+    kCFRunLoopEntry , // 进入 loop
+    kCFRunLoopBeforeTimers , // 触发 Timer 回调
+    kCFRunLoopBeforeSources , // 触发 Source0 回调
+    kCFRunLoopBeforeWaiting , // 等待 mach_port 消息
+    kCFRunLoopAfterWaiting ), // 接收 mach_port 消息
+    kCFRunLoopExit , // 退出 loop
+    kCFRunLoopAllActivities  // loop 所有状态改变
+}
+```
+如果 RunLoop 的主线程，进入睡眠前方法的执行时间过长而导致无法进入睡眠，或者线程唤醒后接收消息时间过长而无法进入下一步的话，就可以认为是线程受阻了，表现出来的就是出现了卡顿。
+要想监听 RunLoop，你就首先需要创建一个CFRunLoopObserverContext 观察者，添加到主线程 RunLoop 的 common 模式下观察。一旦发现进入睡眠前的 kCFRunLoopBeforeSources 状态，或者唤醒后的状态 kCFRunLoopAfterWaiting，在设置的时间阈值内一直没有变化，即可判定为卡顿。接下来，我们就可以 dump 出堆栈的信息，从而进一步分析出具体是哪个方法的执行时间过长。
+
+具体的实现代码如下：
+
 ```objectiveC
 
 // 开始监测卡顿
@@ -199,6 +216,11 @@ static void runLoopObserverCallBack(CFRunLoopObserverRef observer, CFRunLoopActi
 }
 
 ```
+
+# Matrix-iOS 卡顿监控
+Matrix检测卡顿功能主要在WCBlockMonitorMgr下面。
+目前微信使用的卡顿监控，主程序 Runloop 超时的阈值是 2 秒，子线程的检查周期是 1 秒。每隔 1 秒，子线程检查主线程的运行状态；如果检查到主线程 Runloop 运行超过 2 秒则认为是卡顿，并获得当前的线程快照。
+
 
 __builtin_expect这个指令是gcc引入的，作用是允许程序员将最有可能执行的分支告诉编译器。
 这个指令的写法为：__builtin_expect(EXP, N)。
