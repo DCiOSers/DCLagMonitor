@@ -48,78 +48,69 @@ SInt32 CFRunLoopRunSpecific(CFRunLoopRef rl, CFStringRef modeName, CFTimeInterva
 }
 
 // 精简后的 __CFRunLoopRun函数，保留了主要代码
-static int32_t __CFRunLoopRun(CFRunLoopRef rl, CFRunLoopModeRef rlm, CFTimeInterval seconds, Boolean stopAfterHandle, CFRunLoopModeRef previousMode) {
-    int32_t retVal = 0;
-    do {
-        // 通知Observers：即将处理Timers
-        __CFRunLoopDoObservers(rl, rlm, kCFRunLoopBeforeTimers); 
-        
-        // 通知Observers：即将处理Sources
-        __CFRunLoopDoObservers(rl, rlm, kCFRunLoopBeforeSources);
-        
-        // 处理Blocks
-        __CFRunLoopDoBlocks(rl, rlm);
-        
-        // 处理Sources0
-        if (__CFRunLoopDoSources0(rl, rlm, stopAfterHandle)) {
-            // 处理Blocks
-            __CFRunLoopDoBlocks(rl, rlm);
-        }
-        
-        // 如果有Sources1，就跳转到handle_msg标记处
-        if (__CFRunLoopServiceMachPort(dispatchPort, &msg, sizeof(msg_buffer), &livePort, 0, &voucherState, NULL)) {
-            goto handle_msg;
-        }
-        
-        // 通知Observers：即将休眠
-        __CFRunLoopDoObservers(rl, rlm, kCFRunLoopBeforeWaiting);
-        
-        // 进入休眠，等待其他消息唤醒
-        __CFRunLoopSetSleeping(rl);
-        __CFPortSetInsert(dispatchPort, waitSet);
-        do {
-            __CFRunLoopServiceMachPort(waitSet, &msg, sizeof(msg_buffer), &livePort, poll ? 0 : TIMEOUT_INFINITY, &voucherState, &voucherCopy);
-        } while (1);
-        
-        // 醒来
-        __CFPortSetRemove(dispatchPort, waitSet);
-        __CFRunLoopUnsetSleeping(rl);
-        
-        // 通知Observers：已经唤醒
-        __CFRunLoopDoObservers(rl, rlm, kCFRunLoopAfterWaiting);
-        
-    handle_msg: // 看看是谁唤醒了RunLoop，进行相应的处理
-        if (被Timer唤醒的) {
-            // 处理Timer
-            __CFRunLoopDoTimers(rl, rlm, mach_absolute_time());
-        }
-        else if (被GCD唤醒的) {
-            __CFRUNLOOP_IS_SERVICING_THE_MAIN_DISPATCH_QUEUE__(msg);
-        } else { // 被Sources1唤醒的
-            __CFRunLoopDoSource1(rl, rlm, rls, msg, msg->msgh_size, &reply);
-        }
-        
-        // 执行Blocks
-        __CFRunLoopDoBlocks(rl, rlm);
-        
-        // 根据之前的执行结果，来决定怎么做，为retVal赋相应的值
-        if (sourceHandledThisLoop && stopAfterHandle) {
-            retVal = kCFRunLoopRunHandledSource;
-        } else if (timeout_context->termTSR < mach_absolute_time()) {
-            retVal = kCFRunLoopRunTimedOut;
-        } else if (__CFRunLoopIsStopped(rl)) {
-            __CFRunLoopUnsetStopped(rl);
-            retVal = kCFRunLoopRunStopped;
-        } else if (rlm->_stopped) {
-            rlm->_stopped = false;
-            retVal = kCFRunLoopRunStopped;
-        } else if (__CFRunLoopModeIsEmpty(rl, rlm, previousMode)) {
-            retVal = kCFRunLoopRunFinished;
-        }
-        
-    } while (0 == retVal);
+int32_t __CFRunLoopRun()
+{
+    // 通知即将进入runloop
+    __CFRunLoopDoObservers(KCFRunLoopEntry);
     
-    return retVal;
+    do
+    {
+        // 通知将要处理timer和source
+        __CFRunLoopDoObservers(kCFRunLoopBeforeTimers);
+        __CFRunLoopDoObservers(kCFRunLoopBeforeSources);
+        
+        // 处理非延迟的主线程调用
+        __CFRunLoopDoBlocks();
+        // 处理Source0事件
+        __CFRunLoopDoSource0();
+        
+        if (sourceHandledThisLoop) {
+            __CFRunLoopDoBlocks();
+         }
+        /// 如果有 Source1 (基于port) 处于 ready 状态，直接处理这个 Source1 然后跳转去处理消息。
+        if (__Source0DidDispatchPortLastTime) {
+            Boolean hasMsg = __CFRunLoopServiceMachPort();
+            if (hasMsg) goto handle_msg;
+        }
+            
+        /// 通知 Observers: RunLoop 的线程即将进入休眠(sleep)。
+        if (!sourceHandledThisLoop) {
+            __CFRunLoopDoObservers(runloop, currentMode, kCFRunLoopBeforeWaiting);
+        }
+            
+        // GCD dispatch main queue
+        CheckIfExistMessagesInMainDispatchQueue();
+        
+        // 即将进入休眠
+        __CFRunLoopDoObservers(kCFRunLoopBeforeWaiting);
+        
+        // 等待内核mach_msg事件
+        mach_port_t wakeUpPort = SleepAndWaitForWakingUpPorts();
+        
+        // 等待。。。
+        
+        // 从等待中醒来
+        __CFRunLoopDoObservers(kCFRunLoopAfterWaiting);
+        
+        // 处理因timer的唤醒
+        if (wakeUpPort == timerPort)
+            __CFRunLoopDoTimers();
+        
+        // 处理异步方法唤醒,如dispatch_async
+        else if (wakeUpPort == mainDispatchQueuePort)
+            __CFRUNLOOP_IS_SERVICING_THE_MAIN_DISPATCH_QUEUE__()
+            
+        // 处理Source1
+        else
+            __CFRunLoopDoSource1();
+        
+        // 再次确保是否有同步的方法需要调用
+        __CFRunLoopDoBlocks();
+        
+    } while (!stop && !timeout);
+    
+    // 通知即将退出runloop
+    __CFRunLoopDoObservers(CFRunLoopExit);
 }
 ```
 
